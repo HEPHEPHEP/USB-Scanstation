@@ -43,30 +43,60 @@ echo "Desktop:      $DESKTOP_DIR"
 echo "Installation: $INSTALL_DIR"
 echo ""
 
-echo "[1/7] System aktualisieren..."
+echo "[1/8] System aktualisieren..."
 apt update && apt upgrade -y
 
 echo ""
-echo "[2/7] ClamAV installieren..."
+echo "[2/8] ClamAV installieren..."
 apt install -y clamav clamav-daemon clamav-freshclam
 
 echo ""
-echo "[3/7] GUI-Tools installieren..."
-apt install -y zenity libnotify-bin inotify-tools
+echo "[3/8] GUI-Tools installieren..."
+apt install -y zenity inotify-tools
 
 echo ""
-echo "[4/7] Zusätzliche Tools installieren..."
-apt install -y udisks2 ntfs-3g exfat-fuse policykit-1 coreutils
+echo "[4/9] Zusätzliche Tools installieren..."
+apt install -y udisks2 ntfs-3g exfat-fuse coreutils
 
 echo ""
-echo "[5/7] Virensignaturen aktualisieren..."
+echo "[5/9] Automatische Sicherheitsupdates einrichten..."
+apt install -y unattended-upgrades
+
+# Konfiguration für unattended-upgrades
+cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}";
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}:${distro_codename}-updates";
+};
+
+// Automatisch ungenutzte Abhängigkeiten entfernen
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Automatisch neu starten wenn nötig (nachts um 3 Uhr)
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "03:00";
+EOF
+
+# Auto-Updates aktivieren
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
+echo "✓ Automatische Sicherheitsupdates aktiviert"
+
+echo ""
+echo "[6/9] Virensignaturen aktualisieren..."
 systemctl stop clamav-freshclam 2>/dev/null || true
 freshclam || true
 systemctl enable clamav-freshclam
 systemctl start clamav-freshclam
 
 echo ""
-echo "[6/7] Scanner auf Desktop einrichten..."
+echo "[7/9] Scanner auf Desktop einrichten..."
 
 # Alte Installation stoppen
 pkill -f "usb-watch-daemon" 2>/dev/null || true
@@ -110,7 +140,7 @@ chmod +x "$INSTALL_DIR/USB-Scanner.desktop"
 sudo -u "$REAL_USER" gio set "$DESKTOP_DIR/USB-Scanner.desktop" metadata::trusted true 2>/dev/null || true
 
 echo ""
-echo "[7/7] Auto-Scan-Service einrichten..."
+echo "[8/9] Auto-Scan-Service einrichten..."
 
 # Autostart-Eintrag für den Daemon erstellen
 mkdir -p "$REAL_HOME/.config/autostart"
@@ -143,6 +173,54 @@ else
 fi
 
 echo ""
+echo "[9/9] Tägliches Signatur-Update einrichten..."
+
+# sudoers-Eintrag für passwortloses freshclam
+SUDOERS_FILE="/etc/sudoers.d/usb-scanner"
+cat > "$SUDOERS_FILE" << EOF
+# USB-Virenscanner: Erlaubt freshclam und clamav-freshclam ohne Passwort
+$REAL_USER ALL=(root) NOPASSWD: /usr/bin/freshclam
+$REAL_USER ALL=(root) NOPASSWD: /usr/bin/systemctl stop clamav-freshclam
+$REAL_USER ALL=(root) NOPASSWD: /usr/bin/systemctl start clamav-freshclam
+EOF
+chmod 440 "$SUDOERS_FILE"
+echo "✓ sudoers-Eintrag erstellt: $SUDOERS_FILE"
+
+# systemd-Timer für tägliches Update erstellen
+cat > /etc/systemd/system/clamav-update.service << EOF
+[Unit]
+Description=ClamAV Signatur-Update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/systemctl stop clamav-freshclam
+ExecStart=/usr/bin/freshclam --quiet
+ExecStartPost=/usr/bin/systemctl start clamav-freshclam
+EOF
+
+cat > /etc/systemd/system/clamav-update.timer << EOF
+[Unit]
+Description=Tägliches ClamAV Signatur-Update
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+RandomizedDelaySec=180
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# Timer aktivieren
+systemctl daemon-reload
+systemctl enable clamav-update.timer
+systemctl start clamav-update.timer
+
+echo "✓ Täglicher Update-Timer aktiviert (täglich um 06:00 Uhr)"
+
+echo ""
 echo "=========================================="
 echo "  Setup abgeschlossen!"
 echo "=========================================="
@@ -157,7 +235,12 @@ echo "     ├── usb-watch-daemon.sh   (Auto-Erkennung)"
 echo "     ├── Logs/                 (Scan-Protokolle)"
 echo "     └── Quarantäne/           (Isolierte Dateien)"
 echo ""
-echo "AUTO-SCAN: Beim Einstecken eines USB-Sticks erscheint"
-echo "           automatisch ein Scan-Dialog."
-echo "           Funktioniert auch nach Entfernen und erneutem Einstecken."
+echo "AUTOMATISCHE UPDATES:"
+echo "  • Virensignaturen: täglich um 06:00 Uhr"
+echo "  • Systemupdates:   täglich (Sicherheitsupdates)"
+echo "  • Auto-Neustart:   03:00 Uhr falls nötig"
+echo ""
+echo "AUTO-SCAN:"
+echo "  • Dialog erscheint beim Einstecken eines USB-Sticks"
+echo "  • Warnung wenn Signaturen älter als 14 Tage"
 echo ""

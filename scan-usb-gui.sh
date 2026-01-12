@@ -67,36 +67,79 @@ get_signature_date() {
     echo "$sig_date"
 }
 
-# Signaturen aktualisieren mit pkexec für grafische Passwort-Abfrage
-update_signatures() {
-    # Temporäres Update-Skript erstellen
-    local update_script=$(mktemp)
-    cat > "$update_script" << 'UPDATEEOF'
-#!/bin/bash
-systemctl stop clamav-freshclam 2>/dev/null || true
-freshclam
-systemctl start clamav-freshclam 2>/dev/null || true
-UPDATEEOF
-    chmod +x "$update_script"
-    
-    # Update mit pkexec ausführen (grafische Passwort-Abfrage)
-    if pkexec bash "$update_script" 2>&1; then
-        local new_date=$(get_signature_date)
-        zenity --info \
-            --title="Update abgeschlossen" \
-            --text="✓ Virensignaturen erfolgreich aktualisiert.\n\nAktueller Stand: $new_date" \
-            --width=400
+# Signatur-Alter in Tagen ermitteln
+get_signature_age_days() {
+    local sig_file=""
+    if [ -f /var/lib/clamav/daily.cvd ]; then
+        sig_file="/var/lib/clamav/daily.cvd"
+    elif [ -f /var/lib/clamav/daily.cld ]; then
+        sig_file="/var/lib/clamav/daily.cld"
     else
-        zenity --error \
-            --title="Update fehlgeschlagen" \
-            --text="Das Update konnte nicht durchgeführt werden.\n\nMögliche Ursachen:\n• Passwort-Eingabe abgebrochen\n• Keine Internetverbindung\n• Signaturen bereits aktuell" \
-            --width=400
+        echo "999"
+        return
     fi
     
-    rm -f "$update_script"
+    # Datei-Änderungsdatum verwenden
+    local file_date=$(stat -c %Y "$sig_file" 2>/dev/null || echo 0)
+    local now=$(date +%s)
+    local age_seconds=$((now - file_date))
+    local age_days=$((age_seconds / 86400))
+    echo "$age_days"
 }
 
-# Hauptscan mit GUI - robuste Fortschrittsanzeige
+# Warnung anzeigen wenn Signaturen zu alt sind
+check_signature_age() {
+    local age_days=$(get_signature_age_days)
+    local max_age=14
+    
+    if [ "$age_days" -ge "$max_age" ]; then
+        zenity --warning \
+            --title="⚠️ Veraltete Virensignaturen" \
+            --text="<span font='14' color='#cc0000'><b>⚠️ Virensignaturen sind $age_days Tage alt!</b></span>\n\nDie Signaturen sollten maximal $max_age Tage alt sein.\n\nBitte aktualisiere die Signaturen vor dem Scan,\num optimalen Schutz zu gewährleisten.\n\n<b>Möchtest du trotzdem fortfahren?</b>" \
+            --width=450 \
+            --ok-label="Trotzdem scannen"
+        
+        return $?
+    fi
+    return 0
+}
+
+# Signaturen aktualisieren (ohne Passwort dank sudoers-Eintrag)
+update_signatures() {
+    (
+        echo "10"
+        echo "# Stoppe Freshclam-Dienst..."
+        sudo systemctl stop clamav-freshclam 2>/dev/null
+        
+        echo "30"
+        echo "# Lade Virensignaturen herunter..."
+        sleep 1
+        
+        echo "50"
+        sudo freshclam 2>&1
+        
+        echo "90"
+        echo "# Starte Freshclam-Dienst..."
+        sudo systemctl start clamav-freshclam 2>/dev/null
+        
+        echo "100"
+        echo "# Fertig!"
+    ) | zenity --progress \
+        --title="Signaturen aktualisieren" \
+        --text="Initialisiere..." \
+        --percentage=0 \
+        --auto-close \
+        --no-cancel \
+        --width=450
+    
+    local new_date=$(get_signature_date)
+    zenity --info \
+        --title="Update abgeschlossen" \
+        --text="✓ Virensignaturen aktualisiert.\n\nAktueller Stand: $new_date" \
+        --width=400
+}
+
+# Hauptscan mit GUI - pulsierender Fortschrittsbalken mit Abbruch-Option
 perform_scan_gui() {
     local target="$1"
     local target_name=$(basename "$target")
@@ -110,7 +153,7 @@ perform_scan_gui() {
         echo "=========================================="
     } > "$LOG_FILE"
     
-    # Dateien zählen für Fortschrittsberechnung (sichere Zahlenextraktion)
+    # Dateien zählen
     local total_files=$(find "$target" -type f 2>/dev/null | wc -l | tr -cd '0-9')
     total_files=${total_files:-1}
     [ "$total_files" -eq 0 ] && total_files=1
@@ -120,6 +163,7 @@ perform_scan_gui() {
     local temp_output="$temp_dir/output.txt"
     local temp_infected="$temp_dir/infected.txt"
     local scan_done="$temp_dir/done"
+    local abort_scan="$temp_dir/abort"
     
     touch "$temp_output"
     
@@ -134,10 +178,15 @@ perform_scan_gui() {
     ) &
     local scan_pid=$!
     
-    # Fortschrittsfenster (pulsierend, da ClamAV keine Echtzeit-Ausgabe liefert)
+    # Fortschrittsfenster (pulsierend, mit Abbrechen-Button)
     local start_time=$(date +%s)
     (
         while [ ! -f "$scan_done" ]; do
+            # Prüfe ob abgebrochen wurde
+            if [ -f "$abort_scan" ]; then
+                exit 1
+            fi
+            
             elapsed=$(($(date +%s) - start_time))
             minutes=$((elapsed / 60))
             seconds=$((elapsed % 60))
@@ -154,15 +203,32 @@ perform_scan_gui() {
             fi
             sleep 1
         done
-        echo "# Scan abgeschlossen!"
+        echo "# ✅ Scan abgeschlossen!"
     ) | zenity --progress \
         --title="🔍 Scanne: $target_name" \
         --text="Starte Scan..." \
         --pulsate \
         --auto-close \
-        --no-cancel \
         --width=500 \
-        --height=100
+        --height=100 \
+        --cancel-label="Abbrechen"
+    
+    local zenity_exit=$?
+    
+    # Abbruch behandeln (zenity gibt 1 zurück bei Abbruch)
+    if [ $zenity_exit -ne 0 ] && [ ! -f "$scan_done" ]; then
+        touch "$abort_scan"
+        kill $scan_pid 2>/dev/null
+        wait $scan_pid 2>/dev/null
+        
+        zenity --warning \
+            --title="Scan abgebrochen" \
+            --text="Der Scan wurde abgebrochen.\n\nDer USB-Stick wurde nicht vollständig geprüft!" \
+            --width=400
+        
+        rm -rf "$temp_dir"
+        return
+    fi
     
     # Auf Scan warten
     wait $scan_pid 2>/dev/null
@@ -197,8 +263,6 @@ perform_scan_gui() {
             --text="<span font='18' color='#cc0000'><b>⚠️ $infected_count Bedrohung(en) gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $data_scanned\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Infizierte Dateien in Quarantäne:</b>\n<span font='9'>$QUARANTINE_DIR</span>\n\n<b>Gefundene Bedrohungen:</b>\n${infected_details}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#cc0000'><b>⛔ USB-STICK NICHT VERWENDEN!</b></span>" \
             --width=550
         
-        notify-send -u critical "USB-Virenscanner" "⚠️ $infected_count Bedrohung(en) gefunden!" 2>/dev/null || true
-        
         if zenity --question \
             --title="Quarantäne öffnen?" \
             --text="Möchtest du den Quarantäne-Ordner öffnen?" \
@@ -210,8 +274,6 @@ perform_scan_gui() {
             --title="✓ Scan abgeschlossen" \
             --text="<span font='18' color='#4e9a06'><b>✓ Keine Bedrohungen gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $data_scanned\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#4e9a06'><b>✓ USB-Stick kann sicher verwendet werden.</b></span>\n\n<span font='9' color='#555555'>Log: $LOG_FILE</span>" \
             --width=500
-        
-        notify-send -u normal "USB-Virenscanner" "✓ Keine Bedrohungen gefunden" 2>/dev/null || true
     fi
     
     # Aufräumen
@@ -304,10 +366,19 @@ show_logs() {
 
 main_menu() {
     local sig_date=$(get_signature_date)
+    local sig_age=$(get_signature_age_days)
+    
+    # Warnung wenn Signaturen zu alt
+    local age_text="$sig_age Tage alt"
+    if [ "$sig_age" -ge 14 ]; then
+        age_text="<span color='#cc0000'><b>$sig_age Tage alt - Bitte aktualisieren!</b></span>"
+    elif [ "$sig_age" -ge 7 ]; then
+        age_text="<span color='#cc6600'>$sig_age Tage alt</span>"
+    fi
     
     local choice=$(zenity --list \
         --title="USB-Virenscanner" \
-        --text="<b><span font='14'>🛡️ USB-Virenscanner</span></b>\n\nVirensignaturen: $sig_date\n\nWas möchtest du tun?" \
+        --text="<b><span font='14'>🛡️ USB-Virenscanner</span></b>\n\nVirensignaturen: $sig_date\nAlter: $age_text\n\nWas möchtest du tun?" \
         --column="" \
         --column="Aktion" \
         --hide-column=1 \
@@ -316,7 +387,7 @@ main_menu() {
         "quarantine" "🗂️   Quarantäne anzeigen" \
         "logs" "📋  Scan-Logs anzeigen" \
         --width=450 \
-        --height=420 \
+        --height=450 \
         --ok-label="Auswählen" \
         --cancel-label="Beenden")
     
@@ -328,6 +399,13 @@ main_menu() {
     
     case $choice in
         scan)
+            # Erst Signatur-Alter prüfen
+            if ! check_signature_age; then
+                # Benutzer hat abgebrochen
+                main_menu
+                return
+            fi
+            
             local usb_list=$(get_usb_list)
             
             if [ -z "$usb_list" ]; then
@@ -390,7 +468,10 @@ main_menu() {
 # Kommandozeilenargumente
 if [ "$1" = "--scan" ] && [ -n "$2" ]; then
     if [ -d "$2" ]; then
-        perform_scan_gui "$2"
+        # Signatur-Alter prüfen
+        if check_signature_age; then
+            perform_scan_gui "$2"
+        fi
     else
         zenity --error \
             --title="Fehler" \

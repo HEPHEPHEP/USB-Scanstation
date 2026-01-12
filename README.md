@@ -6,26 +6,32 @@ Offline-fähiger Virenscanner für USB-Sticks mit grafischer Oberfläche. Entwic
 
 - **Grafische Oberfläche** - Einfache Bedienung per Mausklick
 - **Automatische Erkennung** - Dialog erscheint beim Einstecken eines USB-Sticks
-- **Fortschrittsanzeige** - Pulsierender Balken mit Laufzeit-Anzeige
+- **Pulsierender Fortschrittsbalken** - Mit Laufzeit-Anzeige und Abbrechen-Button
 - **Quarantäne** - Infizierte Dateien werden automatisch isoliert
 - **Offline-fähig** - Dateien verlassen den Rechner nicht
-- **Signatur-Updates** - Grafische Passwort-Abfrage für Updates
+- **Tägliche Signatur-Updates** - Automatisch (Standard: 06:00 Uhr)
+- **Automatische Systemupdates** - ClamAV und Sicherheitsupdates via unattended-upgrades
+- **Alters-Warnung** - Warnung wenn Signaturen älter als 14 Tage sind
+- **Passwortlose Updates** - Über sudoers-Konfiguration
 
 ## Installation
 
 ```bash
-# Dateien in einen Ordner entpacken
-cd ~/Downloads/usb-scanner-gui
+# Repository klonen oder Dateien herunterladen
+git clone https://github.com/HEPHEPHEP/USB-Scanstation.git
+cd USB-Scanstation
 
 # Setup als root ausführen
 sudo bash setup.sh
 ```
 
-Das Setup installiert automatisch:
+Das Setup installiert und konfiguriert automatisch:
 - ClamAV (Virenscanner)
 - Zenity (GUI-Dialoge)
 - inotify-tools (USB-Erkennung)
-- Weitere Abhängigkeiten
+- unattended-upgrades (automatische Systemupdates)
+- Tägliches Signatur-Update um 06:00 Uhr
+- Passwortlose Updates über sudoers
 
 ## Nutzung
 
@@ -37,7 +43,11 @@ Beim Einstecken eines USB-Sticks erscheint automatisch ein Dialog:
 - **"Jetzt scannen"** → Scan mit Fortschrittsanzeige
 - **"Überspringen"** → Kein Scan
 
-Funktioniert auch nach Entfernen und erneutem Einstecken.
+### Signatur-Warnung
+Wenn die Virensignaturen älter als 14 Tage sind, erscheint vor dem Scan eine Warnung.
+
+### Scan abbrechen
+Während des Scans kann über den **Abbrechen**-Button der Vorgang gestoppt werden.
 
 ## Nach der Installation
 
@@ -57,9 +67,35 @@ Schreibtisch/
 | Option | Beschreibung |
 |--------|--------------|
 | 🔍 USB-Stick scannen | USB-Stick auswählen und scannen |
-| 🔄 Signaturen aktualisieren | Virensignaturen updaten (Passwort erforderlich) |
+| 🔄 Signaturen aktualisieren | Virensignaturen updaten (kein Passwort nötig) |
 | 🗂️ Quarantäne anzeigen | Isolierte Dateien verwalten |
 | 📋 Scan-Logs anzeigen | Vergangene Scans einsehen |
+
+## Automatische Updates
+
+Das Setup richtet zwei automatische Update-Mechanismen ein:
+
+### 1. Virensignaturen (täglich 06:00 Uhr)
+```bash
+# Timer-Status prüfen
+systemctl status clamav-update.timer
+
+# Manuelles Update
+sudo systemctl start clamav-update.service
+```
+
+### 2. Systemupdates (unattended-upgrades)
+- Sicherheitsupdates werden automatisch installiert
+- Inkl. ClamAV-Programmupdates
+- Auto-Neustart um 03:00 Uhr falls nötig
+
+```bash
+# Status prüfen
+sudo unattended-upgrade --dry-run
+
+# Logs anzeigen
+cat /var/log/unattended-upgrades/unattended-upgrades.log
+```
 
 ## Auto-Scan verwalten
 
@@ -106,6 +142,9 @@ tail -f ~/Schreibtisch/USB-Virenscanner/Logs/daemon.log
 ```bash
 # Manuell im Terminal
 sudo freshclam
+
+# Timer-Log prüfen
+journalctl -u clamav-update.service
 ```
 
 ## Systemvoraussetzungen
@@ -113,6 +152,38 @@ sudo freshclam
 - Ubuntu Desktop 20.04, 22.04, 24.04 oder neuer
 - Internetverbindung für Signatur-Updates
 - Ca. 500 MB Speicherplatz für ClamAV-Signaturen
+
+## Vom Setup erstellte Systemdateien
+
+| Datei | Beschreibung |
+|-------|--------------|
+| `/etc/sudoers.d/usb-scanner` | Erlaubt passwortloses freshclam |
+| `/etc/systemd/system/clamav-update.service` | Update-Service |
+| `/etc/systemd/system/clamav-update.timer` | Täglicher Timer (06:00 Uhr) |
+| `/etc/apt/apt.conf.d/50unattended-upgrades` | Konfiguration Auto-Updates |
+| `/etc/apt/apt.conf.d/20auto-upgrades` | Aktiviert Auto-Updates |
+
+## Deinstallation
+
+```bash
+# Desktop-Dateien entfernen
+rm -rf ~/Schreibtisch/USB-Virenscanner
+rm ~/Schreibtisch/USB-Scanner.desktop
+rm ~/.config/autostart/usb-scanner-watch.desktop
+
+# Systemdateien entfernen (als root)
+sudo rm /etc/sudoers.d/usb-scanner
+sudo systemctl disable clamav-update.timer
+sudo rm /etc/systemd/system/clamav-update.*
+sudo systemctl daemon-reload
+
+# Optional: Auto-Updates deaktivieren
+sudo rm /etc/apt/apt.conf.d/50unattended-upgrades
+sudo rm /etc/apt/apt.conf.d/20auto-upgrades
+
+# Daemon stoppen
+pkill -f usb-watch-daemon
+```
 
 ## Enthaltene Dateien
 
