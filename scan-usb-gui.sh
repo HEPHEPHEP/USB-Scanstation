@@ -157,8 +157,10 @@ perform_scan_gui() {
     local total_files=$(find "$target" -type f 2>/dev/null | wc -l | tr -cd '0-9')
     total_files=${total_files:-1}
     [ "$total_files" -eq 0 ] && total_files=1
-    local total_size=$(du -sh "$target" 2>/dev/null | cut -f1)
-    total_size=${total_size:-"unbekannt"}
+    local total_size_raw=$(du -sh "$target" 2>/dev/null | cut -f1)
+    total_size_raw=${total_size_raw:-"unbekannt"}
+    # Einheit formatieren: "139M" → "139 MB", "1,2G" → "1,2 GB"
+    local total_size=$(echo "$total_size_raw" | sed 's/K$/ KB/;s/M$/ MB/;s/G$/ GB/;s/T$/ TB/')
     
     # Temporäre Dateien
     local temp_dir=$(mktemp -d)
@@ -239,8 +241,6 @@ perform_scan_gui() {
     local scanned_files=$(grep -oP "Scanned files: \K\d+" "$temp_output" 2>/dev/null | tr -cd '0-9')
     local infected_count=$(grep -c "FOUND" "$temp_output" 2>/dev/null | tr -cd '0-9')
     local scan_time=$(grep -oP "Time: \K[0-9.]+ sec" "$temp_output" 2>/dev/null || echo "unbekannt")
-    local data_scanned=$(grep -oP "Data scanned: \K[0-9.]+ MB" "$temp_output" 2>/dev/null || echo "unbekannt")
-    
     # Standardwerte
     scanned_files=${scanned_files:-0}
     infected_count=${infected_count:-0}
@@ -262,7 +262,7 @@ perform_scan_gui() {
         
         zenity --error \
             --title="⚠️ BEDROHUNGEN GEFUNDEN" \
-            --text="<span font='18' color='#cc0000'><b>⚠️ $infected_count Bedrohung(en) gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $data_scanned\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Infizierte Dateien in Quarantäne:</b>\n<span font='9'>$QUARANTINE_DIR</span>\n\n<b>Gefundene Bedrohungen:</b>\n${infected_details}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#cc0000'><b>⛔ USB-STICK NICHT VERWENDEN!</b></span>" \
+            --text="<span font='18' color='#cc0000'><b>⚠️ $infected_count Bedrohung(en) gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $total_size\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Infizierte Dateien in Quarantäne:</b>\n<span font='9'>$QUARANTINE_DIR</span>\n\n<b>Gefundene Bedrohungen:</b>\n${infected_details}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#cc0000'><b>⛔ USB-STICK NICHT VERWENDEN!</b></span>" \
             --width=550
         
         if zenity --question \
@@ -274,7 +274,7 @@ perform_scan_gui() {
     else
         zenity --info \
             --title="✓ Scan abgeschlossen" \
-            --text="<span font='18' color='#4e9a06'><b>✓ Keine Bedrohungen gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $data_scanned\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#4e9a06'><b>✓ USB-Stick kann sicher verwendet werden.</b></span>\n\n<span font='9' color='#555555'>Log: $LOG_FILE</span>" \
+            --text="<span font='18' color='#4e9a06'><b>✓ Keine Bedrohungen gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $total_size\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#4e9a06'><b>✓ USB-Stick kann sicher verwendet werden.</b></span>\n\n<span font='9' color='#555555'>Log: $LOG_FILE</span>" \
             --width=500
     fi
     

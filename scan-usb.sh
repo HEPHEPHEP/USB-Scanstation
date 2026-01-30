@@ -128,8 +128,10 @@ perform_scan() {
     # Dateien zählen und Gesamtgröße ermitteln
     local total_files=$(find "$target" -type f 2>/dev/null | wc -l | tr -cd '0-9')
     total_files=${total_files:-0}
-    local total_size=$(du -sh "$target" 2>/dev/null | cut -f1)
-    total_size=${total_size:-"unbekannt"}
+    local total_size_raw=$(du -sh "$target" 2>/dev/null | cut -f1)
+    total_size_raw=${total_size_raw:-"unbekannt"}
+    # Einheit formatieren: "139M" → "139 MB", "1,2G" → "1,2 GB"
+    local total_size=$(echo "$total_size_raw" | sed 's/K$/ KB/;s/M$/ MB/;s/G$/ GB/;s/T$/ TB/')
     print_status "Dateien: $total_files ($total_size)"
     echo ""
 
@@ -166,13 +168,11 @@ perform_scan() {
     # Ergebnisse auswerten
     local scanned=$(grep -oP "Scanned files: \K\d+" "$temp_result" 2>/dev/null || echo "0")
     local infected=$(grep -oP "Infected files: \K\d+" "$temp_result" 2>/dev/null || echo "0")
-    local data_scanned=$(grep -oP "Data scanned: \K[0-9.]+ MB" "$temp_result" 2>/dev/null || echo "unbekannt")
-
     echo ""
     echo -e "${BOLD}SCAN-ERGEBNIS${NC}"
     echo "─────────────────────────────────────"
     echo -e "Gescannte Dateien:  ${CYAN}$scanned${NC}"
-    echo -e "Datenmenge:         ${CYAN}$data_scanned${NC}"
+    echo -e "Datenmenge:         ${CYAN}$total_size${NC}"
     echo -e "Scan-Dauer:         ${CYAN}$((duration / 60))m $((duration % 60))s${NC}"
     echo ""
     
