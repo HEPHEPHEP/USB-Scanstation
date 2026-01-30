@@ -153,10 +153,12 @@ perform_scan_gui() {
         echo "=========================================="
     } > "$LOG_FILE"
     
-    # Dateien zählen
+    # Dateien zählen und Gesamtgröße ermitteln
     local total_files=$(find "$target" -type f 2>/dev/null | wc -l | tr -cd '0-9')
     total_files=${total_files:-1}
     [ "$total_files" -eq 0 ] && total_files=1
+    local total_size=$(du -sh "$target" 2>/dev/null | cut -f1)
+    total_size=${total_size:-"unbekannt"}
     
     # Temporäre Dateien
     local temp_dir=$(mktemp -d)
@@ -199,7 +201,7 @@ perform_scan_gui() {
             if [ "$infected" -gt 0 ]; then
                 echo "# ⚠️ $infected Bedrohung(en) gefunden! | Laufzeit: ${minutes}m ${seconds}s"
             else
-                echo "# Scanne $total_files Dateien... | Laufzeit: ${minutes}m ${seconds}s"
+                echo "# Scanne $total_files Dateien ($total_size)... | Laufzeit: ${minutes}m ${seconds}s"
             fi
             sleep 1
         done
