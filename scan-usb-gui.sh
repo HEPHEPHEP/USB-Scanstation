@@ -236,7 +236,10 @@ perform_scan_gui() {
     
     # Auf Scan warten
     wait $scan_pid 2>/dev/null
-    
+
+    # Filesystem-Puffer auf USB synchronisieren (verhindert Korruption unter Windows)
+    sync
+
     # Ergebnisse auswerten (sichere Zahlenextraktion)
     local scanned_files=$(grep -oP "Scanned files: \K\d+" "$temp_output" 2>/dev/null | tr -cd '0-9')
     local infected_count=$(grep -c "FOUND" "$temp_output" 2>/dev/null | tr -cd '0-9')
@@ -278,8 +281,53 @@ perform_scan_gui() {
             --width=500
     fi
     
+    # Sicheres Auswerfen anbieten
+    offer_safe_eject "$target"
+
     # Aufräumen
     rm -rf "$temp_dir"
+}
+
+# USB-Stick sicher auswerfen
+safe_eject() {
+    local mountpoint="$1"
+    sync
+    # Block-Device für diesen Mountpoint ermitteln
+    local block_device=$(findmnt -n -o SOURCE "$mountpoint" 2>/dev/null)
+    if [ -n "$block_device" ]; then
+        # udisksctl bevorzugen (Desktop-Integration)
+        if command -v udisksctl &> /dev/null; then
+            udisksctl unmount -b "$block_device" 2>/dev/null && \
+            udisksctl power-off -b "$(lsblk -no PKNAME "$block_device" 2>/dev/null | head -1 | sed 's|^|/dev/|')" 2>/dev/null
+        else
+            umount "$mountpoint" 2>/dev/null
+        fi
+    fi
+}
+
+# Sicheres Auswerfen anbieten (nach Scan)
+offer_safe_eject() {
+    local mountpoint="$1"
+    if [ -d "$mountpoint" ] && mountpoint -q "$mountpoint" 2>/dev/null; then
+        if zenity --question \
+            --title="USB-Stick auswerfen?" \
+            --text="<b>Möchtest du den USB-Stick jetzt sicher auswerfen?</b>\n\nDas verhindert Dateisystem-Fehler unter Windows.\n\nMountpoint: $mountpoint" \
+            --ok-label="Sicher auswerfen" \
+            --cancel-label="Eingesteckt lassen" \
+            --width=450; then
+            if safe_eject "$mountpoint"; then
+                zenity --info \
+                    --title="USB-Stick ausgeworfen" \
+                    --text="✓ Der USB-Stick wurde sicher ausgeworfen.\n\nDu kannst ihn jetzt abziehen." \
+                    --width=350
+            else
+                zenity --warning \
+                    --title="Auswerfen fehlgeschlagen" \
+                    --text="Der USB-Stick konnte nicht ausgeworfen werden.\n\nBitte wirf ihn über den Dateimanager aus,\nbevor du ihn abziehst." \
+                    --width=400
+            fi
+        fi
+    fi
 }
 
 # Quarantäne-Dialog
