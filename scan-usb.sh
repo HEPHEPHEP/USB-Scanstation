@@ -211,7 +211,37 @@ perform_scan() {
     echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
     
     rm -f "$temp_result"
-    
+
+    # Filesystem-Puffer auf USB synchronisieren (verhindert Korruption unter Windows)
+    sync
+
+    # Sicheres Auswerfen anbieten
+    if [ -d "$target" ] && mountpoint -q "$target" 2>/dev/null; then
+        echo ""
+        read -p "USB-Stick sicher auswerfen? (j/N): " eject_choice
+        if [ "$eject_choice" = "j" ] || [ "$eject_choice" = "J" ]; then
+            sync
+            local block_device=$(findmnt -n -o SOURCE "$target" 2>/dev/null)
+            if [ -n "$block_device" ]; then
+                if command -v udisksctl &> /dev/null; then
+                    local parent_dev=$(lsblk -no PKNAME "$block_device" 2>/dev/null | head -1)
+                    if udisksctl unmount -b "$block_device" 2>/dev/null; then
+                        udisksctl power-off -b "/dev/$parent_dev" 2>/dev/null
+                        print_success "USB-Stick sicher ausgeworfen. Du kannst ihn jetzt abziehen."
+                    else
+                        print_warning "Auswerfen fehlgeschlagen. Bitte über den Dateimanager auswerfen."
+                    fi
+                else
+                    if umount "$target" 2>/dev/null; then
+                        print_success "USB-Stick ausgehängt. Du kannst ihn jetzt abziehen."
+                    else
+                        print_warning "Auswerfen fehlgeschlagen. Bitte über den Dateimanager auswerfen."
+                    fi
+                fi
+            fi
+        fi
+    fi
+
     return $scan_exit_code
 }
 
