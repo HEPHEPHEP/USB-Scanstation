@@ -170,24 +170,35 @@ perform_scan_gui() {
     local abort_scan="$temp_dir/abort"
     
     touch "$temp_output"
-    
+
+    # Scanner ermitteln und ins Log schreiben
+    local scanner_used=""
+    if clamdscan --ping 2>/dev/null; then
+        scanner_used="clamdscan --multiscan (Multicore)"
+    else
+        scanner_used="clamscan (Single-Core)"
+    fi
+    echo "Scanner: $scanner_used" >> "$LOG_FILE"
+
     # Scan im Hintergrund starten
     # clamdscan --multiscan nutzt alle CPU-Kerne über den clamd-Daemon
     # Fallback auf single-threaded clamscan wenn clamd nicht läuft
     (
         if clamdscan --ping 2>/dev/null; then
+            echo "Scanner: clamdscan --multiscan (Multicore)" > "$temp_output"
             clamdscan \
                 --multiscan \
                 --fdpass \
                 --infected \
                 --move="$QUARANTINE_DIR" \
-                "$target" > "$temp_output" 2>&1
+                "$target" >> "$temp_output" 2>&1
         else
+            echo "Scanner: clamscan (Single-Core)" > "$temp_output"
             clamscan \
                 --infected \
                 --recursive \
                 --move="$QUARANTINE_DIR" \
-                "$target" > "$temp_output" 2>&1
+                "$target" >> "$temp_output" 2>&1
         fi
         touch "$scan_done"
     ) &
