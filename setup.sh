@@ -89,11 +89,30 @@ EOF
 echo "✓ Automatische Sicherheitsupdates aktiviert"
 
 echo ""
-echo "[6/9] Virensignaturen aktualisieren..."
+echo "[6/9] Virensignaturen aktualisieren & ClamAV-Daemon einrichten..."
 systemctl stop clamav-freshclam 2>/dev/null || true
 freshclam || true
 systemctl enable clamav-freshclam
 systemctl start clamav-freshclam
+
+# clamd-Daemon aktivieren (ermöglicht Multicore-Scanning mit clamdscan --multiscan)
+echo "Aktiviere ClamAV-Daemon für Multicore-Scanning..."
+systemctl stop clamav-daemon 2>/dev/null || true
+systemctl enable clamav-daemon
+systemctl start clamav-daemon
+
+# Warten bis clamd bereit ist (lädt Signaturen in den Speicher)
+echo -n "Warte auf clamd..."
+for i in $(seq 1 30); do
+    if clamdscan --ping 2>/dev/null; then
+        echo " bereit!"
+        break
+    fi
+    echo -n "."
+    sleep 2
+done
+echo ""
+echo "✓ ClamAV-Daemon aktiviert (Multicore-Scanning verfügbar)"
 
 echo ""
 echo "[7/9] Scanner auf Desktop einrichten..."
