@@ -148,15 +148,32 @@ perform_scan() {
     local temp_result=$(mktemp)
     
     # ClamAV Scan
-    # --infected: Nur infizierte Dateien anzeigen
-    # --recursive: Unterverzeichnisse durchsuchen
-    # --move: Infizierte Dateien in Quarantäne verschieben
-    clamscan \
-        --infected \
-        --recursive \
-        --move="$QUARANTINE_DIR" \
-        --log="$LOG_FILE" \
-        "$target" 2>&1 | tee "$temp_result"
+    # clamdscan --multiscan nutzt alle CPU-Kerne über den clamd-Daemon
+    # Fallback auf single-threaded clamscan wenn clamd nicht läuft
+    local scanner_used=""
+    if clamdscan --ping 1 2>/dev/null; then
+        scanner_used="clamdscan --multiscan (Multicore)"
+        print_status "Multicore-Scan (clamdscan --multiscan)"
+        echo "Scanner: $scanner_used" >> "$LOG_FILE"
+        clamdscan \
+            --multiscan \
+            --fdpass \
+            --infected \
+            --move="$QUARANTINE_DIR" \
+            --log="$LOG_FILE" \
+            "$target" 2>&1 | tee "$temp_result"
+    else
+        scanner_used="clamscan (Single-Core)"
+        print_warning "clamd-Daemon nicht verfügbar - nutze Single-Core-Scan"
+        print_status "Tipp: sudo systemctl start clamav-daemon"
+        echo "Scanner: $scanner_used" >> "$LOG_FILE"
+        clamscan \
+            --infected \
+            --recursive \
+            --move="$QUARANTINE_DIR" \
+            --log="$LOG_FILE" \
+            "$target" 2>&1 | tee "$temp_result"
+    fi
     
     local scan_exit_code=${PIPESTATUS[0]}
     local end_time=$(date +%s)
