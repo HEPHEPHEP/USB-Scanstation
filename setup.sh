@@ -101,6 +101,13 @@ systemctl stop clamav-daemon 2>/dev/null || true
 systemctl enable clamav-daemon
 systemctl start clamav-daemon
 
+# Benutzer zur clamav-Gruppe hinzufügen (für Socket-Zugriff)
+if ! groups "$REAL_USER" | grep -q '\bclamav\b'; then
+    usermod -aG clamav "$REAL_USER"
+    echo "✓ Benutzer '$REAL_USER' zur clamav-Gruppe hinzugefügt"
+    echo "  (Neuanmeldung erforderlich für volle Multicore-Unterstützung)"
+fi
+
 # Warten bis clamd bereit ist (lädt Signaturen in den Speicher)
 echo -n "Warte auf clamd..."
 for i in $(seq 1 30); do
