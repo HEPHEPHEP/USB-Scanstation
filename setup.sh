@@ -111,7 +111,7 @@ fi
 # Warten bis clamd bereit ist (lädt Signaturen in den Speicher)
 echo -n "Warte auf clamd..."
 for i in $(seq 1 30); do
-    if clamdscan --ping 2>/dev/null; then
+    if clamdscan --ping 1 2>/dev/null; then
         echo " bereit!"
         break
     fi

@@ -151,7 +151,7 @@ perform_scan() {
     # clamdscan --multiscan nutzt alle CPU-Kerne über den clamd-Daemon
     # Fallback auf single-threaded clamscan wenn clamd nicht läuft
     local scanner_used=""
-    if clamdscan --ping 2>/dev/null; then
+    if clamdscan --ping 1 2>/dev/null; then
         scanner_used="clamdscan --multiscan (Multicore)"
         print_status "Multicore-Scan (clamdscan --multiscan)"
         echo "Scanner: $scanner_used" >> "$LOG_FILE"

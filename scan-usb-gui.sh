@@ -173,7 +173,7 @@ perform_scan_gui() {
 
     # Scanner ermitteln und ins Log schreiben
     local scanner_used=""
-    if clamdscan --ping 2>/dev/null; then
+    if clamdscan --ping 1 2>/dev/null; then
         scanner_used="clamdscan --multiscan (Multicore)"
     else
         scanner_used="clamscan (Single-Core)"
@@ -184,7 +184,7 @@ perform_scan_gui() {
     # clamdscan --multiscan nutzt alle CPU-Kerne über den clamd-Daemon
     # Fallback auf single-threaded clamscan wenn clamd nicht läuft
     (
-        if clamdscan --ping 2>/dev/null; then
+        if clamdscan --ping 1 2>/dev/null; then
             echo "Scanner: clamdscan --multiscan (Multicore)" > "$temp_output"
             clamdscan \
                 --multiscan \
