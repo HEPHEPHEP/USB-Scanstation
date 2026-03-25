@@ -276,7 +276,13 @@ perform_scan_gui() {
     # Log vervollständigen
     cat "$temp_output" >> "$LOG_FILE"
     
-    # Ergebnisfenster
+    # Prüfen ob Auswerfen möglich ist
+    local can_eject=false
+    if [ -d "$target" ] && mountpoint -q "$target" 2>/dev/null; then
+        can_eject=true
+    fi
+
+    # Ergebnisfenster mit integriertem Auswerfen-Dialog
     if [ "$infected_count" -gt 0 ]; then
         local infected_details=""
         while IFS= read -r line; do
@@ -284,27 +290,66 @@ perform_scan_gui() {
             local virus=$(echo "$line" | grep -oP "[A-Za-z0-9._-]+(?= FOUND)" 2>/dev/null)
             infected_details="${infected_details}• ${filename}\n   Virus: ${virus}\n\n"
         done < "$temp_infected"
-        
-        zenity --error \
+
+        local eject_hint=""
+        if [ "$can_eject" = true ]; then
+            eject_hint="\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n💡 <b>USB-Stick sicher auswerfen</b>, um Dateisystem-Fehler\nunter Windows zu vermeiden."
+        fi
+
+        local result_choice
+        result_choice=$(zenity --error \
             --title="⚠️ BEDROHUNGEN GEFUNDEN" \
-            --text="<span font='18' color='#cc0000'><b>⚠️ $infected_count Bedrohung(en) gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $total_size\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Infizierte Dateien in Quarantäne:</b>\n<span font='9'>$QUARANTINE_DIR</span>\n\n<b>Gefundene Bedrohungen:</b>\n${infected_details}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#cc0000'><b>⛔ USB-STICK NICHT VERWENDEN!</b></span>" \
-            --width=550
-        
-        if zenity --question \
-            --title="Quarantäne öffnen?" \
-            --text="Möchtest du den Quarantäne-Ordner öffnen?" \
-            --width=350; then
+            --text="<span font='18' color='#cc0000'><b>⚠️ $infected_count Bedrohung(en) gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $total_size\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Infizierte Dateien in Quarantäne:</b>\n<span font='9'>$QUARANTINE_DIR</span>\n\n<b>Gefundene Bedrohungen:</b>\n${infected_details}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#cc0000'><b>⛔ USB-STICK NICHT VERWENDEN!</b></span>${eject_hint}" \
+            --extra-button="Quarantäne öffnen" \
+            $([ "$can_eject" = true ] && echo '--extra-button=Sicher auswerfen') \
+            --width=550 2>&1)
+
+        if [ "$result_choice" = "Sicher auswerfen" ]; then
+            if safe_eject "$target"; then
+                zenity --info \
+                    --title="USB-Stick ausgeworfen" \
+                    --text="✓ Der USB-Stick wurde sicher ausgeworfen.\n\nDu kannst ihn jetzt abziehen." \
+                    --width=350
+            else
+                zenity --warning \
+                    --title="Auswerfen fehlgeschlagen" \
+                    --text="Der USB-Stick konnte nicht ausgeworfen werden.\n\nBitte wirf ihn über den Dateimanager aus,\nbevor du ihn abziehst." \
+                    --width=400
+            fi
+        elif [ "$result_choice" = "Quarantäne öffnen" ]; then
             xdg-open "$QUARANTINE_DIR" 2>/dev/null &
         fi
     else
-        zenity --info \
-            --title="✓ Scan abgeschlossen" \
-            --text="<span font='18' color='#4e9a06'><b>✓ Keine Bedrohungen gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $total_size\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#4e9a06'><b>✓ USB-Stick kann sicher verwendet werden.</b></span>\n\n<span font='9' color='#555555'>Log: $LOG_FILE</span>" \
-            --width=500
+        if [ "$can_eject" = true ]; then
+            # Ergebnis mit integriertem Auswerfen-Button
+            zenity --question \
+                --title="✓ Scan abgeschlossen" \
+                --text="<span font='18' color='#4e9a06'><b>✓ Keine Bedrohungen gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $total_size\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#4e9a06'><b>✓ USB-Stick kann sicher verwendet werden.</b></span>\n\n<span font='9' color='#555555'>Log: $LOG_FILE</span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n💡 <b>USB-Stick sicher auswerfen?</b>\nDas verhindert Dateisystem-Fehler unter Windows." \
+                --ok-label="Sicher auswerfen" \
+                --cancel-label="Eingesteckt lassen" \
+                --width=500
+            local eject_rc=$?
+            if [ $eject_rc -eq 0 ]; then
+                if safe_eject "$target"; then
+                    zenity --info \
+                        --title="USB-Stick ausgeworfen" \
+                        --text="✓ Der USB-Stick wurde sicher ausgeworfen.\n\nDu kannst ihn jetzt abziehen." \
+                        --width=350
+                else
+                    zenity --warning \
+                        --title="Auswerfen fehlgeschlagen" \
+                        --text="Der USB-Stick konnte nicht ausgeworfen werden.\n\nBitte wirf ihn über den Dateimanager aus,\nbevor du ihn abziehst." \
+                        --width=400
+                fi
+            fi
+        else
+            # Kein Auswerfen möglich (z.B. manueller Ordner-Scan)
+            zenity --info \
+                --title="✓ Scan abgeschlossen" \
+                --text="<span font='18' color='#4e9a06'><b>✓ Keine Bedrohungen gefunden!</b></span>\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<b>Scan-Statistik:</b>\nGescannte Dateien: $scanned_files\nDatenmenge: $total_size\nScan-Zeit: $scan_time\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n<span color='#4e9a06'><b>✓ USB-Stick kann sicher verwendet werden.</b></span>\n\n<span font='9' color='#555555'>Log: $LOG_FILE</span>" \
+                --width=500
+        fi
     fi
-    
-    # Sicheres Auswerfen anbieten
-    offer_safe_eject "$target"
 
     # Aufräumen
     rm -rf "$temp_dir"
@@ -327,30 +372,6 @@ safe_eject() {
     fi
 }
 
-# Sicheres Auswerfen anbieten (nach Scan)
-offer_safe_eject() {
-    local mountpoint="$1"
-    if [ -d "$mountpoint" ] && mountpoint -q "$mountpoint" 2>/dev/null; then
-        if zenity --question \
-            --title="USB-Stick auswerfen?" \
-            --text="<b>Möchtest du den USB-Stick jetzt sicher auswerfen?</b>\n\nDas verhindert Dateisystem-Fehler unter Windows.\n\nMountpoint: $mountpoint" \
-            --ok-label="Sicher auswerfen" \
-            --cancel-label="Eingesteckt lassen" \
-            --width=450; then
-            if safe_eject "$mountpoint"; then
-                zenity --info \
-                    --title="USB-Stick ausgeworfen" \
-                    --text="✓ Der USB-Stick wurde sicher ausgeworfen.\n\nDu kannst ihn jetzt abziehen." \
-                    --width=350
-            else
-                zenity --warning \
-                    --title="Auswerfen fehlgeschlagen" \
-                    --text="Der USB-Stick konnte nicht ausgeworfen werden.\n\nBitte wirf ihn über den Dateimanager aus,\nbevor du ihn abziehst." \
-                    --width=400
-            fi
-        fi
-    fi
-}
 
 # Quarantäne-Dialog
 show_quarantine() {
